@@ -10,6 +10,7 @@ import {
   useApi,
 } from '@shopify/ui-extensions-react/customer-account';
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 
 export default reactExtension(
   'customer-account.order-index.block.render',
@@ -47,6 +48,19 @@ function Extension() {
     return products;
   };
 
+  const parseXLSX = (arrayBuffer) => {
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+    return jsonData;
+  };
+
+  const isXLSXFile = (fileName) => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    return extension === 'xlsx' || extension === 'xls';
+  };
+
   const extractVariantId = (gidString) => {
     // Extract numeric ID from gid://shopify/ProductVariant/42649849659629
     const match = gidString.match(/\/(\d+)$/);
@@ -64,13 +78,25 @@ function Extension() {
     setUploadedFile(file);
     
     try {
-      const text = await file.text();
-      const products = parseCSV(text);
+      let products;
+      const isExcel = isXLSXFile(file.name);
+      
+      if (isExcel) {
+        // Read XLSX file as array buffer
+        const arrayBuffer = await file.arrayBuffer();
+        products = parseXLSX(arrayBuffer);
+      } else {
+        // Read CSV file as text
+        const text = await file.text();
+        products = parseCSV(text);
+      }
       
       // Filter products with valid quantity (not 0, not empty, not null)
       const validProducts = products.filter(product => {
-        const quantity = product['Quantity']?.trim();
-        return quantity && quantity !== '0' && quantity !== '' && !isNaN(quantity);
+        const quantity = product['Quantity'];
+        // Handle both string and number quantities
+        const quantityStr = quantity?.toString().trim();
+        return quantityStr && quantityStr !== '0' && quantityStr !== '' && !isNaN(quantityStr);
       });
       
       if (validProducts.length === 0) {
@@ -82,12 +108,12 @@ function Extension() {
       // Build cart URL
       const cartItems = validProducts.map(product => {
         const variantId = extractVariantId(product['Variant ID']);
-        const quantity = product['Quantity'];
+        const quantity = product['Quantity']?.toString().trim();
         return `${variantId}:${quantity}`;
       }).filter(item => item.includes(':')); // Filter out any invalid items
       
       if (cartItems.length === 0) {
-        setError('Could not extract valid variant IDs from CSV');
+        setError(`Could not extract valid variant IDs from ${isExcel ? 'Excel' : 'CSV'} file`);
         setProcessing(false);
         return;
       }
@@ -101,14 +127,14 @@ function Extension() {
       setProcessing(false);
       
     } catch (err) {
-      console.error('Error processing CSV:', err);
-      setError('Error processing CSV file. Please check the format.');
+      console.error('Error processing file:', err);
+      setError(`Error processing ${isXLSXFile(file.name) ? 'Excel' : 'CSV'} file. Please check the format.`);
       setProcessing(false);
     }
   };
 
   const handleDropRejected = (files) => {
-    setError('Only CSV files are accepted. Please upload a valid CSV file.');
+    setError('Only CSV or Excel (.xlsx, .xls) files are accepted. Please upload a valid file.');
   };
 
   useEffect(() => {
@@ -125,39 +151,33 @@ function Extension() {
     <BlockStack spacing="base">
       <InlineStack spacing="tight" blockAlignment="center">
         {downloadUrl && (
-          <Button 
-            to={downloadUrl} 
-            external
-            kind="secondary"
-            size="small"
-          >
-            Download Catalog
-          </Button>
+          <Link to={downloadUrl} external>
+            <Button kind="secondary">
+              Download Catalog
+            </Button>
+          </Link>
         )}
         
         <DropZone
-          accept=".csv,text/csv,application/vnd.ms-excel"
+          accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           multiple={false}
-          label="Upload CSV"
+          label="Upload Xlsx or Xls file"
           onInput={handleInput}
           onDropRejected={handleDropRejected}
           error={error}
         />
 
         {cartUrl && (
-          <Button 
-            to={cartUrl} 
-            external
-            kind="primary"
-            size="small"
-          >
-            Add to Cart
-          </Button>
+          <Link to={cartUrl} external>
+            <Button kind="primary">
+              Add to Cart
+            </Button>
+          </Link>
         )}
       </InlineStack>
 
       {processing && (
-        <Text>Processing CSV file...</Text>
+        <Text>Processing file...</Text>
       )}
 
       {uploadedFile && !processing && (
